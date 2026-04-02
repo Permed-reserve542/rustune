@@ -1,10 +1,13 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::event::AppEvent;
+
+#[cfg(unix)]
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
+use tokio::net::UnixStream;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Check if mpv is available on the system.
 pub async fn check_mpv() -> Result<()> {
@@ -12,10 +15,10 @@ pub async fn check_mpv() -> Result<()> {
         .arg("--version")
         .output()
         .await
-        .context("mpv not found. Install it with: brew install mpv")?;
+        .context("mpv not found. Install it from https://mpv.io")?;
 
     if !output.status.success() {
-        anyhow::bail!("mpv check failed. Install it with: brew install mpv");
+        anyhow::bail!("mpv check failed. Install it from https://mpv.io");
     }
 
     Ok(())
@@ -23,6 +26,7 @@ pub async fn check_mpv() -> Result<()> {
 
 /// Play a stream URL via mpv. Sends events through `tx`.
 /// Stops if `kill_rx` receives a signal.
+#[cfg(unix)]
 pub async fn play(
     url: String,
     _title: String,
@@ -161,7 +165,49 @@ pub async fn play(
     let _ = tx.send(AppEvent::PlaybackComplete);
 }
 
+/// Play a stream URL via mpv (Windows stub — no IPC progress).
+#[cfg(not(unix))]
+pub async fn play(
+    url: String,
+    _title: String,
+    tx: mpsc::UnboundedSender<AppEvent>,
+    mut kill_rx: oneshot::Receiver<()>,
+) {
+    let child = match tokio::process::Command::new("mpv")
+        .arg("--no-video")
+        .arg("--idle=no")
+        .arg(&url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(AppEvent::PlaybackError(format!("Failed to start mpv: {e}")));
+            return;
+        }
+    };
+
+    let child = Arc::new(Mutex::new(child));
+    let child_clone = child.clone();
+    tokio::select! {
+        _ = &mut kill_rx => {
+            let mut guard = child_clone.lock().await;
+            let _ = guard.kill().await;
+        }
+        status = async {
+            let mut guard = child.lock().await;
+            guard.wait().await
+        } => {
+            let _ = status;
+        }
+    }
+
+    let _ = tx.send(AppEvent::PlaybackComplete);
+}
+
 /// Seek to a specific position (in seconds) via mpv IPC.
+#[cfg(unix)]
 pub async fn seek_to(position_secs: f64) -> Result<()> {
     let socket_path = format!("/tmp/rustune-mpv-{}.sock", std::process::id());
 
@@ -182,7 +228,14 @@ pub async fn seek_to(position_secs: f64) -> Result<()> {
     Ok(())
 }
 
+/// Seek to a specific position (Windows stub).
+#[cfg(not(unix))]
+pub async fn seek_to(_position_secs: f64) -> Result<()> {
+    anyhow::bail!("Seek is not supported on Windows yet")
+}
+
 /// Set pause state on the mpv IPC socket.
+#[cfg(unix)]
 pub async fn set_pause(paused: bool) -> Result<()> {
     let socket_path = format!("/tmp/rustune-mpv-{}.sock", std::process::id());
 
@@ -199,4 +252,10 @@ pub async fn set_pause(paused: bool) -> Result<()> {
     writer.flush().await?;
 
     Ok(())
+}
+
+/// Set pause state (Windows stub).
+#[cfg(not(unix))]
+pub async fn set_pause(_paused: bool) -> Result<()> {
+    anyhow::bail!("Pause control is not supported on Windows yet")
 }
