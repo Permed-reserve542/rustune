@@ -63,7 +63,7 @@ jobs:
         run: |
           cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
           codesign --force --options runtime \
-            --identity "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
             --timestamp \
             ${{ matrix.artifact }}
 
