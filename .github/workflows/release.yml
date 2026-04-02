@@ -108,14 +108,18 @@ jobs:
             --timestamp \
             "$APPDIR/MacOS/rustune-launcher"
 
-          codesign --force --options runtime \
-            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
-            --timestamp \
-            --entitlements - rustune.app <<EOF
+          # Write entitlements to file
+          cat > /tmp/entitlements.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict><key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/></dict></plist>
-          EOF
+          PLIST
+
+          codesign --force --options runtime \
+            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            --timestamp \
+            --entitlements /tmp/entitlements.plist \
+            rustune.app
 
           # Zip the .app for upload
           ditto -c -k --keepParent rustune.app ${{ matrix.app_artifact }}
