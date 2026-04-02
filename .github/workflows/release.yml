@@ -17,15 +17,19 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: rustune-aarch64-macos
+            app_artifact: rustune-aarch64-macos-app.zip
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: rustune-x86_64-macos
+            app_artifact: rustune-x86_64-macos-app.zip
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: rustune-x86_64-windows.exe
+            app_artifact: ""
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: rustune-x86_64-linux
+            app_artifact: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +44,7 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      # --- macOS: codesign bare binary ---
       - name: Import Apple certificate
         if: matrix.os == 'macos-latest'
         env:
@@ -56,7 +61,7 @@ jobs:
             -k actions /tmp/build.keychain
           security list-keychains -s /tmp/build.keychain
 
-      - name: Code sign (macOS)
+      - name: Codesign bare binary (macOS)
         if: matrix.os == 'macos-latest'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -67,44 +72,104 @@ jobs:
             --timestamp \
             ${{ matrix.artifact }}
 
-      - name: Rename binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Create .app bundle (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
-          chmod +x ${{ matrix.artifact }}
+          APPDIR="rustune.app/Contents"
+          mkdir -p "$APPDIR/MacOS"
 
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        run: cp target/${{ matrix.target }}/release/rustune.exe ${{ matrix.artifact }}
+          # Copy binary
+          cp target/${{ matrix.target }}/release/rustune "$APPDIR/MacOS/rustune-bin"
+
+          # Create launcher script (opens Terminal.app and runs the binary)
+          cat > "$APPDIR/MacOS/rustune-launcher" << 'LAUNCHER'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec osascript -e "tell application \"Terminal\"
+              activate
+              do script \"'$DIR/rustune-bin'; exit\"
+          end tell"
+          LAUNCHER
+          chmod +x "$APPDIR/MacOS/rustune-launcher"
+
+          # Copy Info.plist
+          cp assets/macos/Info.plist "$APPDIR/Info.plist"
+
+          # Codesign inner binary first, then the launcher, then the .app
+          codesign --force --options runtime \
+            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            --timestamp \
+            "$APPDIR/MacOS/rustune-bin"
+
+          codesign --force --options runtime \
+            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            --timestamp \
+            "$APPDIR/MacOS/rustune-launcher"
+
+          codesign --force --options runtime \
+            -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            --timestamp \
+            --entitlements - rustune.app <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/></dict></plist>
+          EOF
+
+          # Zip the .app for upload
+          ditto -c -k --keepParent rustune.app ${{ matrix.app_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
+      - name: Upload .app bundle (macOS)
+        if: matrix.app_artifact != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app_artifact }}
+          path: ${{ matrix.app_artifact }}
+
+      # --- Linux ---
+      - name: Rename binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
+          chmod +x ${{ matrix.artifact }}
+
+      # --- Windows ---
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp target/${{ matrix.target }}/release/rustune.exe ${{ matrix.artifact }}
+
   notarize:
-    name: Notarize macOS binaries
+    name: Notarize macOS (${{ matrix.artifact }})
     needs: build
     runs-on: macos-latest
     strategy:
       matrix:
         include:
           - artifact: rustune-aarch64-macos
+            app_artifact: rustune-aarch64-macos-app.zip
           - artifact: rustune-x86_64-macos
+            app_artifact: rustune-x86_64-macos-app.zip
     steps:
+      # --- Notarize bare binary ---
       - uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
 
-      - name: Notarize
+      - name: Notarize bare binary
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           chmod +x ${{ matrix.artifact }}
-          ditto -c -k --keepParent ${{ matrix.artifact }} rustune.zip
-          xcrun notarytool submit rustune.zip \
+          ditto -c -k --keepParent ${{ matrix.artifact }} bare.zip
+          xcrun notarytool submit bare.zip \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
@@ -116,10 +181,41 @@ jobs:
           path: ${{ matrix.artifact }}
           overwrite: true
 
+      # --- Notarize .app bundle ---
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.app_artifact }}
+
+      - name: Notarize .app bundle
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit ${{ matrix.app_artifact }} \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Staple .app bundle
+        run: |
+          unzip -o ${{ matrix.app_artifact }}
+          xcrun stapler staple rustune.app
+
+      - name: Re-zip stapled .app
+        run: ditto -c -k --keepParent rustune.app ${{ matrix.app_artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app_artifact }}
+          path: ${{ matrix.app_artifact }}
+          overwrite: true
+
   release:
     name: Create Release
     needs: [build, notarize]
-    if: always() && needs.build.result == 'success' && (needs.notarize.result == 'success' || needs.notarize.result == 'skipped')
+    if: always() && needs.build.result == 'success' && needs.notarize.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -127,7 +223,7 @@ jobs:
           path: artifacts
 
       - name: Ensure binaries are executable
-        run: find artifacts -type f ! -name '*.exe' -exec chmod +x {} +
+        run: find artifacts -type f ! -name '*.exe' ! -name '*.zip' -exec chmod +x {} +
 
       - name: Create release
         uses: softprops/action-gh-release@v2
