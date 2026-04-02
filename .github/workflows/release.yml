@@ -40,9 +40,38 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename binary (Unix)
-        if: runner.os != 'Windows'
-        run: cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
+      - name: Import Apple certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          echo "$APPLE_CERT_BASE64" | base64 --decode > /tmp/certificate.p12
+          security create-keychain -p actions /tmp/build.keychain
+          security import /tmp/certificate.p12 \
+            -k /tmp/build.keychain \
+            -P "$APPLE_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -k actions /tmp/build.keychain
+          security list-keychains -s /tmp/build.keychain
+
+      - name: Code sign (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
+          codesign --force --options runtime \
+            --identity "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
+            --timestamp \
+            ${{ matrix.artifact }}
+
+      - name: Rename binary (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cp target/${{ matrix.target }}/release/rustune ${{ matrix.artifact }}
+          chmod +x ${{ matrix.artifact }}
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
@@ -53,14 +82,56 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
+  notarize:
+    name: Notarize macOS binaries
+    needs: build
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - artifact: rustune-aarch64-macos
+          - artifact: rustune-x86_64-macos
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          chmod +x ${{ matrix.artifact }}
+          zip rustune.zip ${{ matrix.artifact }}
+          xcrun notarytool submit rustune.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+      - name: Staple
+        run: |
+          xcrun stapler staple ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          overwrite: true
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, notarize]
+    if: always() && needs.build.result == 'success' && (needs.notarize.result == 'success' || needs.notarize.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Ensure binaries are executable
+        run: find artifacts -type f ! -name '*.exe' -exec chmod +x {} +
 
       - name: Create release
         uses: softprops/action-gh-release@v2
