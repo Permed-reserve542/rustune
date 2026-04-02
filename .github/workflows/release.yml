@@ -12,24 +12,25 @@ jobs:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: rustune-aarch64-macos
-            app_artifact: rustune-aarch64-macos-app.zip
+            dmg_artifact: rustune-aarch64-macos.dmg
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: rustune-x86_64-macos
-            app_artifact: rustune-x86_64-macos-app.zip
+            dmg_artifact: rustune-x86_64-macos.dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: rustune-x86_64-windows.exe
-            app_artifact: ""
+            dmg_artifact: ""
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: rustune-x86_64-linux
-            app_artifact: ""
+            dmg_artifact: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +45,7 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      # --- macOS: codesign bare binary ---
+      # --- macOS setup ---
       - name: Import Apple certificate
         if: matrix.os == 'macos-latest'
         env:
@@ -72,32 +73,52 @@ jobs:
             --timestamp \
             ${{ matrix.artifact }}
 
-      - name: Create .app bundle (macOS)
+      - name: Generate .icns icon from SVG
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install librsvg
+          mkdir -p /tmp/rustune.iconset
+          for size in 16 32 64 128 256 512; do
+            rsvg-convert -w $size -h $size assets/macos/icon.svg -o /tmp/rustune.iconset/icon_${size}x${size}.png
+          done
+          rsvg-convert -w 32 -h 32 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_16x16@2x.png
+          rsvg-convert -w 64 -h 64 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_32x32@2x.png
+          rsvg-convert -w 128 -h 128 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_64x64@2x.png
+          rsvg-convert -w 256 -h 256 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_128x128@2x.png
+          rsvg-convert -w 512 -h 512 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_256x256@2x.png
+          rsvg-convert -w 1024 -h 1024 assets/macos/icon.svg -o /tmp/rustune.iconset/icon_512x512@2x.png
+          iconutil -c icns /tmp/rustune.iconset -o assets/macos/AppIcon.icns
+
+      - name: Create .app bundle + .dmg (macOS)
         if: matrix.os == 'macos-latest'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           APPDIR="rustune.app/Contents"
-          mkdir -p "$APPDIR/MacOS"
+          mkdir -p "$APPDIR/MacOS" "$APPDIR/Resources"
 
           # Copy binary
           cp target/${{ matrix.target }}/release/rustune "$APPDIR/MacOS/rustune-bin"
 
-          # Create launcher script (opens Terminal.app and runs the binary)
+          # Create launcher script
           cat > "$APPDIR/MacOS/rustune-launcher" << 'LAUNCHER'
           #!/bin/bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
           exec osascript -e "tell application \"Terminal\"
               activate
-              do script \"'$DIR/rustune-bin'; exit\"
+              do script \"clear && '$DIR/rustune-bin'; exit\"
           end tell"
           LAUNCHER
           chmod +x "$APPDIR/MacOS/rustune-launcher"
 
-          # Copy Info.plist
+          # Copy Info.plist and icon
           cp assets/macos/Info.plist "$APPDIR/Info.plist"
+          cp assets/macos/AppIcon.icns "$APPDIR/Resources/AppIcon.icns"
 
-          # Codesign inner binary first, then the launcher, then the .app
+          # Update plist to reference icon
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$APPDIR/Info.plist"
+
+          # Codesign inner executables
           codesign --force --options runtime \
             -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
             --timestamp \
@@ -108,33 +129,37 @@ jobs:
             --timestamp \
             "$APPDIR/MacOS/rustune-launcher"
 
-          # Write entitlements to file
+          # Write entitlements
           cat > /tmp/entitlements.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict><key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/></dict></plist>
           PLIST
 
+          # Codesign the .app bundle
           codesign --force --options runtime \
             -s "Developer ID Application: Dzulfikar Ats Tsauri (${APPLE_TEAM_ID})" \
             --timestamp \
             --entitlements /tmp/entitlements.plist \
             rustune.app
 
-          # Zip the .app for upload
-          ditto -c -k --keepParent rustune.app ${{ matrix.app_artifact }}
+          # Create .dmg
+          hdiutil create -volname "rustune" \
+            -srcfolder rustune.app \
+            -ov -format UDZO \
+            ${{ matrix.dmg_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-      - name: Upload .app bundle (macOS)
-        if: matrix.app_artifact != ''
+      - name: Upload .dmg (macOS)
+        if: matrix.dmg_artifact != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app_artifact }}
-          path: ${{ matrix.app_artifact }}
+          name: ${{ matrix.dmg_artifact }}
+          path: ${{ matrix.dmg_artifact }}
 
       # --- Linux ---
       - name: Rename binary (Linux)
@@ -156,9 +181,9 @@ jobs:
       matrix:
         include:
           - artifact: rustune-aarch64-macos
-            app_artifact: rustune-aarch64-macos-app.zip
+            dmg_artifact: rustune-aarch64-macos.dmg
           - artifact: rustune-x86_64-macos
-            app_artifact: rustune-x86_64-macos-app.zip
+            dmg_artifact: rustune-x86_64-macos.dmg
     steps:
       # --- Notarize bare binary ---
       - uses: actions/download-artifact@v4
@@ -185,35 +210,30 @@ jobs:
           path: ${{ matrix.artifact }}
           overwrite: true
 
-      # --- Notarize .app bundle ---
+      # --- Notarize .dmg ---
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.app_artifact }}
+          name: ${{ matrix.dmg_artifact }}
 
-      - name: Notarize .app bundle
+      - name: Notarize .dmg
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          xcrun notarytool submit ${{ matrix.app_artifact }} \
+          xcrun notarytool submit ${{ matrix.dmg_artifact }} \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
 
-      - name: Staple .app bundle
-        run: |
-          unzip -o ${{ matrix.app_artifact }}
-          xcrun stapler staple rustune.app
-
-      - name: Re-zip stapled .app
-        run: ditto -c -k --keepParent rustune.app ${{ matrix.app_artifact }}
+      - name: Staple .dmg
+        run: xcrun stapler staple ${{ matrix.dmg_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app_artifact }}
-          path: ${{ matrix.app_artifact }}
+          name: ${{ matrix.dmg_artifact }}
+          path: ${{ matrix.dmg_artifact }}
           overwrite: true
 
   release:
@@ -227,7 +247,7 @@ jobs:
           path: artifacts
 
       - name: Ensure binaries are executable
-        run: find artifacts -type f ! -name '*.exe' ! -name '*.zip' -exec chmod +x {} +
+        run: find artifacts -type f ! -name '*.exe' ! -name '*.dmg' ! -name '*.zip' -exec chmod +x {} +
 
       - name: Create release
         uses: softprops/action-gh-release@v2
