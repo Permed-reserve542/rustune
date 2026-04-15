@@ -23,11 +23,46 @@ use std::io::Read;
 
 use ratatui::style::Color;
 
+#[derive(Debug, Clone)]
+pub struct BmpImage {
+    pub width: u32,
+    pub height: u32,
+    pub palette: Vec<Color>,
+    /// Pixel indices into `palette`, in row-major, top-down order.
+    pub pixels: Vec<u8>,
+}
+
+impl BmpImage {
+    pub fn color_at(&self, x: u32, y: u32) -> Color {
+        let x = x.min(self.width.saturating_sub(1));
+        let y = y.min(self.height.saturating_sub(1));
+        let idx = (y as usize)
+            .saturating_mul(self.width as usize)
+            .saturating_add(x as usize);
+        let p = self.pixels.get(idx).copied().unwrap_or(0) as usize;
+        self.palette.get(p).copied().unwrap_or(Color::Black)
+    }
+}
+
 /// Parsed Winamp skin data, ready for the TUI renderer.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct WinampSkin {
     pub name: String,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub main_bitmap: Option<BmpImage>,
+
+    // Additional BMP images for bitmap-mode rendering
+    pub numbers_bitmap: Option<BmpImage>,
+    pub cbuttons_bitmap: Option<BmpImage>,
+    pub posbar_bitmap: Option<BmpImage>,
+    pub text_bitmap: Option<BmpImage>,
+    pub playpaus_bitmap: Option<BmpImage>,
+    pub titlebar_bitmap: Option<BmpImage>,
+    pub monoster_bitmap: Option<BmpImage>,
+    pub shufrep_bitmap: Option<BmpImage>,
+    pub volume_bitmap: Option<BmpImage>,
 
     // Colors extracted from MAIN.BMP palette (indices are well-known)
     pub chrome_dark: Color,       // palette[5] — darkest chrome
@@ -78,7 +113,7 @@ impl WinampSkin {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)?;
 
-        let name = path
+        let fallback_name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
@@ -94,6 +129,8 @@ impl WinampSkin {
             files.insert(fname, buf);
         }
 
+        let (name, author, description) = parse_wsz_metadata(&files, &fallback_name);
+
         // Parse MAIN.BMP palette
         let main_pal = parse_bmp_palette(files.get("MAIN.BMP"));
         let chrome_dark = main_pal.get(5).copied().unwrap_or(Color::Rgb(8, 8, 16));
@@ -101,6 +138,18 @@ impl WinampSkin {
         let chrome_light = main_pal.get(2).copied().unwrap_or(Color::Rgb(189, 206, 214));
         let body_bg = main_pal.get(4).copied().unwrap_or(Color::Rgb(57, 57, 90));
         let titlebar_bg = main_pal.get(6).copied().unwrap_or(Color::Rgb(0, 198, 255));
+        let main_bitmap = parse_bmp_8bit(files.get("MAIN.BMP"));
+
+        // Parse additional BMP images for bitmap-mode rendering
+        let numbers_bitmap = parse_bmp_8bit(files.get("NUMBERS.BMP"));
+        let cbuttons_bitmap = parse_bmp_8bit(files.get("CBUTTONS.BMP"));
+        let posbar_bitmap = parse_bmp_8bit(files.get("POSBAR.BMP"));
+        let text_bitmap = parse_bmp_8bit(files.get("TEXT.BMP"));
+        let playpaus_bitmap = parse_bmp_8bit(files.get("PLAYPAUS.BMP"));
+        let titlebar_bitmap = parse_bmp_8bit(files.get("TITLEBAR.BMP"));
+        let monoster_bitmap = parse_bmp_8bit(files.get("MONOSTER.BMP"));
+        let shufrep_bitmap = parse_bmp_8bit(files.get("SHUFREP.BMP"));
+        let volume_bitmap = parse_bmp_8bit(files.get("VOLUME.BMP"));
 
         // Parse NUMBERS.BMP for LED colors
         let num_pal = parse_bmp_palette(files.get("NUMBERS.BMP"));
@@ -143,6 +192,18 @@ impl WinampSkin {
 
         Ok(Self {
             name,
+            author,
+            description,
+            main_bitmap,
+            numbers_bitmap,
+            cbuttons_bitmap,
+            posbar_bitmap,
+            text_bitmap,
+            playpaus_bitmap,
+            titlebar_bitmap,
+            monoster_bitmap,
+            shufrep_bitmap,
+            volume_bitmap,
             chrome_dark,
             chrome_mid,
             chrome_light,
@@ -170,10 +231,56 @@ impl WinampSkin {
         })
     }
 
+    /// Read metadata (name/author/description) from a .wsz without parsing BMP palettes.
+    pub fn peek_metadata(path: &std::path::Path) -> anyhow::Result<(String, Option<String>, Option<String>)> {
+        let file = std::fs::File::open(path)?;
+        let mut archive = zip::ZipArchive::new(file)?;
+
+        let fallback_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let wanted = [
+            "GENEX.INI",
+            "SKIN.INI",
+            "SKIN.XML",
+            "README.TXT",
+            "INFO.TXT",
+        ];
+
+        let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+        for i in 0..archive.len() {
+            let mut f = archive.by_index(i)?;
+            let fname = f.name().to_uppercase();
+            if !wanted.contains(&fname.as_str()) {
+                continue;
+            }
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf)?;
+            files.insert(fname, buf);
+        }
+
+        Ok(parse_wsz_metadata(&files, &fallback_name))
+    }
+
     /// Built-in default skin (the classic Winamp 2.x "base" skin colors).
     pub fn default_skin() -> Self {
         Self {
             name: "Winamp Classic".into(),
+            author: Some("Nullsoft".into()),
+            description: Some("Built-in fallback Winamp 2.x classic colors".into()),
+            main_bitmap: None,
+            numbers_bitmap: None,
+            cbuttons_bitmap: None,
+            posbar_bitmap: None,
+            text_bitmap: None,
+            playpaus_bitmap: None,
+            titlebar_bitmap: None,
+            monoster_bitmap: None,
+            shufrep_bitmap: None,
+            volume_bitmap: None,
             chrome_dark: Color::Rgb(8, 8, 16),
             chrome_mid: Color::Rgb(123, 140, 156),
             chrome_light: Color::Rgb(189, 206, 214),
@@ -245,6 +352,218 @@ impl WinampSkin {
         skins.sort();
         skins
     }
+}
+
+fn parse_wsz_metadata(
+    files: &HashMap<String, Vec<u8>>,
+    fallback_name: &str,
+) -> (String, Option<String>, Option<String>) {
+    // Prefer explicit metadata files if present; otherwise fall back to filename stem.
+    let candidates = [
+        "GENEX.INI",
+        "SKIN.INI",
+        "SKIN.XML",
+        "README.TXT",
+        "INFO.TXT",
+    ];
+
+    for key in candidates {
+        if let Some(bytes) = files.get(key) {
+            let s = String::from_utf8_lossy(bytes);
+            let (n, a, d) = match key {
+                "SKIN.XML" => parse_xmlish_metadata(&s),
+                _ => parse_iniish_metadata(&s),
+            };
+            let name = n
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .unwrap_or(fallback_name)
+                .to_string();
+            let author = a.and_then(|v| {
+                let t = v.trim().to_string();
+                (!t.is_empty()).then_some(t)
+            });
+            let description = d.and_then(|v| {
+                let t = v.trim().to_string();
+                (!t.is_empty()).then_some(t)
+            });
+            return (name, author, description);
+        }
+    }
+
+    (fallback_name.to_string(), None, None)
+}
+
+fn parse_iniish_metadata(s: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let mut name: Option<String> = None;
+    let mut author: Option<String> = None;
+    let mut desc: Option<String> = None;
+
+    for raw in s.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            continue; // section header
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let key = k.trim().to_lowercase();
+        let mut val = v.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+        if val.is_empty() {
+            continue;
+        }
+
+        // Heuristics: common keys seen in Winamp skin metadata.
+        match key.as_str() {
+            "name" | "skinname" | "title" | "skin_title" => {
+                if name.is_none() {
+                    name = Some(std::mem::take(&mut val));
+                }
+            }
+            "author" | "skin_author" => {
+                if author.is_none() {
+                    author = Some(std::mem::take(&mut val));
+                }
+            }
+            "comment" | "description" | "skin_description" => {
+                if desc.is_none() {
+                    desc = Some(std::mem::take(&mut val));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // README/INFO files often just contain prose; take the first non-empty line as name if unset.
+    if name.is_none() {
+        if let Some(first) = s.lines().map(str::trim).find(|l| !l.is_empty()) {
+            // Avoid treating obvious "readme" boilerplate as name.
+            let lower = first.to_lowercase();
+            if !lower.starts_with("readme")
+                && !lower.starts_with("skin")
+                && first.len() <= 80
+            {
+                name = Some(first.to_string());
+            }
+        }
+    }
+
+    (name, author, desc)
+}
+
+fn parse_xmlish_metadata(s: &str) -> (Option<String>, Option<String>, Option<String>) {
+    // Minimal tag extraction without adding an XML dependency.
+    fn between(hay: &str, open: &str, close: &str) -> Option<String> {
+        let start = hay.find(open)? + open.len();
+        let rest = &hay[start..];
+        let end = rest.find(close)?;
+        Some(rest[..end].trim().to_string())
+    }
+
+    let lower = s.to_lowercase();
+    let mut name = between(&lower, "<name>", "</name>");
+    let mut author = between(&lower, "<author>", "</author>");
+    let mut desc = between(&lower, "<description>", "</description>");
+
+    // If we pulled from lowercased text, re-extract from original by searching case-insensitively.
+    // (good enough for typical ASCII metadata)
+    if name.is_some() || author.is_some() || desc.is_some() {
+        if name.is_some() {
+            name = between(s, "<name>", "</name>")
+                .or_else(|| between(s, "<Name>", "</Name>"));
+        }
+        if author.is_some() {
+            author = between(s, "<author>", "</author>")
+                .or_else(|| between(s, "<Author>", "</Author>"));
+        }
+        if desc.is_some() {
+            desc = between(s, "<description>", "</description>")
+                .or_else(|| between(s, "<Description>", "</Description>"));
+        }
+    }
+
+    (name, author, desc)
+}
+
+fn parse_bmp_8bit(data: Option<&Vec<u8>>) -> Option<BmpImage> {
+    let data = data?;
+    if data.len() < 54 {
+        return None;
+    }
+    if &data[0..2] != b"BM" {
+        return None;
+    }
+
+    let pixel_offset = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
+    let dib_size = u32::from_le_bytes([data[14], data[15], data[16], data[17]]) as usize;
+    if data.len() < 14 + dib_size {
+        return None;
+    }
+
+    // BITMAPINFOHEADER (size 40) is expected for Winamp skins.
+    let width = i32::from_le_bytes([data[18], data[19], data[20], data[21]]);
+    let height = i32::from_le_bytes([data[22], data[23], data[24], data[25]]);
+    let planes = u16::from_le_bytes([data[26], data[27]]);
+    let bpp = u16::from_le_bytes([data[28], data[29]]);
+    let compression = u32::from_le_bytes([data[30], data[31], data[32], data[33]]);
+    let colors_used = u32::from_le_bytes([data[46], data[47], data[48], data[49]]);
+
+    if planes != 1 || bpp != 8 || compression != 0 {
+        return None;
+    }
+    if width <= 0 || height == 0 {
+        return None;
+    }
+
+    let w = width as u32;
+    let top_down = height < 0;
+    let h = height.unsigned_abs();
+
+    let palette_start = 14 + dib_size;
+    if pixel_offset <= palette_start || data.len() < pixel_offset {
+        return None;
+    }
+
+    let palette_bytes = &data[palette_start..pixel_offset];
+    let mut num_colors = (palette_bytes.len() / 4) as u32;
+    if colors_used != 0 {
+        num_colors = num_colors.min(colors_used);
+    }
+    if num_colors == 0 {
+        return None;
+    }
+
+    let mut palette = Vec::with_capacity(num_colors as usize);
+    for i in 0..num_colors as usize {
+        let b = palette_bytes[i * 4];
+        let g = palette_bytes[i * 4 + 1];
+        let r = palette_bytes[i * 4 + 2];
+        palette.push(Color::Rgb(r, g, b));
+    }
+
+    let row_bytes = ((w as usize + 3) / 4) * 4; // rows padded to 4 bytes
+    let needed = row_bytes.saturating_mul(h as usize);
+    if data.len() < pixel_offset + needed {
+        return None;
+    }
+    let pix = &data[pixel_offset..pixel_offset + needed];
+
+    let mut pixels = vec![0u8; (w as usize).saturating_mul(h as usize)];
+    for y in 0..h as usize {
+        let src_y = if top_down { y } else { (h as usize - 1).saturating_sub(y) };
+        let src_row = &pix[src_y * row_bytes..src_y * row_bytes + w as usize];
+        let dst_row = &mut pixels[y * w as usize..y * w as usize + w as usize];
+        dst_row.copy_from_slice(src_row);
+    }
+
+    Some(BmpImage {
+        width: w,
+        height: h,
+        palette,
+        pixels,
+    })
 }
 
 /// Parse the palette (color table) from 8-bit BMP data.
