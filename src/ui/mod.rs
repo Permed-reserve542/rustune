@@ -5,6 +5,8 @@ mod player;
 mod results;
 mod settings;
 mod skin_browser;
+mod skin_bitmap;
+mod skin_layout;
 mod winamp;
 
 use ratatui::Frame;
