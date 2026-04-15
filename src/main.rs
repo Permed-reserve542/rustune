@@ -21,6 +21,7 @@ use app::{App, BrowseAction, InputAction, Mode, MouseAction, OnboardingAction, S
 use event::AppEvent;
 use extractor::{ExtractorRegistry, ExtractorStatus, YtdlpExtractor};
 use media::SourceKind;
+use ui::skin_layout::SkinLayout;
 
 fn main() -> Result<()> {
     let default_panic = std::panic::take_hook();
@@ -172,6 +173,9 @@ async fn run_doctor() {
 async fn async_main() -> Result<()> {
     let config = config::Config::load();
 
+    // Ensure the default Winamp skin (base-2.91) is available on disk
+    ensure_default_skin().await;
+
     // Check mpv (required for all playback)
     if let Err(e) = player::check_mpv().await {
         if config.onboarding_done {
@@ -194,6 +198,7 @@ async fn run(mut terminal: DefaultTerminal, config: config::Config) -> Result<()
     // Load Winamp skin if theme is Winamp
     if app.theme.name == "Winamp" {
         app.winamp_skin = load_winamp_skin();
+        app.skin_layout = app.winamp_skin.as_ref().and_then(SkinLayout::from_skin);
     }
 
     // Set up extractor registry
@@ -372,6 +377,7 @@ fn handle_key(
                 }
                 SettingsAction::ThemeChanged => {
                     app.winamp_skin = load_winamp_skin();
+                    app.skin_layout = app.winamp_skin.as_ref().and_then(SkinLayout::from_skin);
                 }
                 SettingsAction::OpenSkinBrowserLocal => {
                     app.mode = Mode::SkinBrowser;
@@ -384,6 +390,8 @@ fn handle_key(
                     app.skin_browser_has_more = false;
                     app.skin_downloading_md5 = None;
                     app.skin_total_count = 0;
+                    app.skin_search_query.clear();
+                    app.skin_search_active = false;
                     // Populate with local skins
                     let local_skins = skin::WinampSkin::available_skins();
                     for p in &local_skins {
@@ -391,16 +399,23 @@ fn handle_key(
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        let display_name = p.file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
+                        let display_name = skin::WinampSkin::peek_metadata(p)
+                            .ok()
+                            .map(|(name, _author, _desc)| name)
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| {
+                                p.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string()
+                            });
                         app.skin_entries.push(app::SkinEntry {
                             md5: String::new(),
                             filename,
                             display_name,
                             is_local: true,
                             nsfw: false,
+                            average_color: None,
                         });
                     }
                     if !app.skin_entries.is_empty() {
@@ -418,7 +433,9 @@ fn handle_key(
                     app.skin_browser_has_more = true;
                     app.skin_downloading_md5 = None;
                     app.skin_total_count = 0;
-                    fetch_skin_list(tx, 0, 20);
+                    app.skin_search_query.clear();
+                    app.skin_search_active = false;
+                    fetch_skin_list(tx, 0, 50);
                 }
                 SettingsAction::None => {}
             }
@@ -439,6 +456,7 @@ fn handle_key(
                     match skin::WinampSkin::from_wsz(&skin_path) {
                         Ok(skin) => {
                             app.winamp_skin = Some(skin);
+                            app.skin_layout = app.winamp_skin.as_ref().and_then(SkinLayout::from_skin);
                         }
                         Err(e) => {
                             app.skin_browser_error = Some(format!("Failed to load skin: {e}"));
@@ -447,7 +465,16 @@ fn handle_key(
                 }
                 SkinBrowserAction::RequestFetch => {
                     app.skin_browser_loading = true;
-                    fetch_skin_list(tx, app.skin_browser_offset, 20);
+                    fetch_skin_list(tx, app.skin_browser_offset, 50);
+                }
+                SkinBrowserAction::Search(query) => {
+                    app.skin_entries.clear();
+                    app.skin_list_state.select(Some(0));
+                    app.skin_browser_loading = true;
+                    app.skin_browser_error = None;
+                    app.skin_browser_offset = 0;
+                    app.skin_browser_has_more = false;
+                    fetch_skin_search(tx, &query, 0, 50);
                 }
                 SkinBrowserAction::None => {}
             }
@@ -675,6 +702,10 @@ fn handle_app_event(
                         app.skin_entries = new_entries;
                     } else {
                         app.skin_entries.extend(new_entries);
+                        // Re-sort entire list alphabetically after append
+                        app.skin_entries.sort_by(|a, b| {
+                            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                        });
                     }
                     app.skin_total_count = total_count;
                     app.skin_browser_has_more = app.skin_entries.len() < total_count;
@@ -704,6 +735,7 @@ fn handle_app_event(
                     match skin::WinampSkin::from_wsz(&skin_path) {
                         Ok(skin) => {
                             app.winamp_skin = Some(skin);
+                            app.skin_layout = app.winamp_skin.as_ref().and_then(SkinLayout::from_skin);
                         }
                         Err(e) => {
                             app.skin_browser_error = Some(format!("Failed to load skin: {e}"));
@@ -850,6 +882,30 @@ fn which_exists(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Download the default Winamp skin (base-2.91) if no skins exist locally.
+async fn ensure_default_skin() {
+    let skin_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
+        .join("rustune")
+        .join("skins");
+
+    let default_path = skin_dir.join("base-2.91.wsz");
+    if default_path.exists() {
+        return;
+    }
+
+    let md5 = "5e4f10275dcb1fb211d4a8b4f1bda236";
+    let url = format!("https://r2.webampskins.org/skins/{md5}.wsz");
+
+    let client = reqwest::Client::new();
+    if let Ok(resp) = client.get(&url).send().await {
+        if let Ok(bytes) = resp.bytes().await {
+            let _ = std::fs::create_dir_all(&skin_dir);
+            let _ = std::fs::write(&default_path, &bytes);
+        }
+    }
+}
+
 /// Try to load a .wsz skin file. Checks:
 /// 1. Any .wsz files in ~/.config/rustune/skins/
 /// 2. Falls back to built-in default Winamp skin colors
@@ -882,15 +938,92 @@ fn fetch_skin_list(tx: &mpsc::UnboundedSender<AppEvent>, offset: usize, limit: u
     });
 }
 
+/// Search skins by text query via GraphQL.
+fn fetch_skin_search(
+    tx: &mpsc::UnboundedSender<AppEvent>,
+    query: &str,
+    offset: usize,
+    limit: usize,
+) {
+    let tx = tx.clone();
+    let query = query.to_string();
+    tokio::spawn(async move {
+        let result = fetch_skin_search_inner(&query, offset, limit).await;
+        let _ = tx.send(AppEvent::SkinListFetched {
+            entries: result,
+            requested_offset: offset,
+        });
+    });
+}
+
+async fn fetch_skin_search_inner(
+    query: &str,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<(Vec<app::SkinEntry>, usize)> {
+    let gql = serde_json::json!({
+        "query": "query($q: String!, $first: Int!, $offset: Int!) { searchSkins(first: $first, offset: $offset, query: $q) { md5 filename nsfw averageColor } }",
+        "variables": { "q": query, "first": limit, "offset": offset }
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://skins.webamp.org/graphql")
+        .json(&gql)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let body: serde_json::Value = resp.json().await?;
+
+    let skins_arr = body["data"]["searchSkins"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let local_skins = skin::WinampSkin::available_skins();
+    let local_md5s: Vec<String> = local_skins
+        .iter()
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_lowercase())
+        })
+        .collect();
+
+    let mut entries: Vec<app::SkinEntry> = skins_arr
+        .into_iter()
+        .filter(|s| !s["nsfw"].as_bool().unwrap_or(false))
+        .map(|s| {
+            let md5 = s["md5"].as_str().unwrap_or("").to_string();
+            let raw_filename = s["filename"].as_str().unwrap_or("").to_string();
+            let display_name = raw_filename.trim_end_matches(".wsz").trim_end_matches(".zip").to_string();
+            let is_local = local_md5s.iter().any(|l| l == &md5.to_lowercase());
+            let average_color = s["averageColor"].as_str().map(|c| c.to_string());
+            app::SkinEntry {
+                md5,
+                filename: raw_filename,
+                display_name,
+                is_local,
+                nsfw: false,
+                average_color,
+            }
+        })
+        .collect();
+
+    let total = entries.len();
+    entries.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+
+    Ok((entries, total))
+}
+
 async fn fetch_skin_list_inner(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<(Vec<app::SkinEntry>, usize)> {
     let query = serde_json::json!({
-        "query": format!(
-            "{{ skins(first: {}, offset: {}) {{ nodes {{ md5 filename nsfw }} count }} }}",
-            limit, offset
-        )
+        "query": "query($first: Int!, $offset: Int!) { skins(first: $first, offset: $offset, filter: APPROVED) { nodes { md5 filename nsfw averageColor } count } }",
+        "variables": { "first": limit, "offset": offset }
     });
 
     let client = reqwest::Client::new();
@@ -912,7 +1045,6 @@ async fn fetch_skin_list_inner(
         .cloned()
         .unwrap_or_default();
 
-    // Get local skin md5s for marking
     let local_skins = skin::WinampSkin::available_skins();
     let local_md5s: Vec<String> = local_skins
         .iter()
@@ -923,7 +1055,7 @@ async fn fetch_skin_list_inner(
         })
         .collect();
 
-    let entries: Vec<app::SkinEntry> = skins_arr
+    let mut entries: Vec<app::SkinEntry> = skins_arr
         .into_iter()
         .filter(|s| !s["nsfw"].as_bool().unwrap_or(false))
         .map(|s| {
@@ -931,15 +1063,20 @@ async fn fetch_skin_list_inner(
             let raw_filename = s["filename"].as_str().unwrap_or("").to_string();
             let display_name = raw_filename.trim_end_matches(".wsz").trim_end_matches(".zip").to_string();
             let is_local = local_md5s.iter().any(|l| l == &md5.to_lowercase());
+            let average_color = s["averageColor"].as_str().map(|c| c.to_string());
             app::SkinEntry {
                 md5,
                 filename: raw_filename,
                 display_name,
                 is_local,
                 nsfw: false,
+                average_color,
             }
         })
         .collect();
+
+    // Sort alphabetically by display name
+    entries.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
 
     Ok((entries, total_count))
 }

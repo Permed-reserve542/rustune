@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::media::{MediaItem, SourceKind};
 use crate::skin::WinampSkin;
 use crate::theme::Theme;
+use crate::ui::skin_layout::SkinLayout;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
@@ -89,6 +90,7 @@ pub struct SkinEntry {
     pub display_name: String,
     pub is_local: bool,
     pub nsfw: bool,
+    pub average_color: Option<String>,
 }
 
 /// Actions returned by skin browser key handler.
@@ -98,6 +100,7 @@ pub enum SkinBrowserAction {
     Download(String, String), // md5, filename
     LoadLocal(String),        // filename
     RequestFetch,
+    Search(String),
 }
 
 /// Which skin browser mode is active.
@@ -125,6 +128,7 @@ pub struct App {
     pub config: Config,
     pub theme: Theme,
     pub winamp_skin: Option<WinampSkin>,
+    pub skin_layout: Option<SkinLayout>,
     pub active_source: SourceKind,
     pub onboarding_step: OnboardingStep,
     pub onboarding_dep_selected: usize, // 0 = mpv, 1 = yt-dlp
@@ -142,6 +146,8 @@ pub struct App {
     pub skin_downloading_md5: Option<String>,
     pub skin_total_count: usize,
     pub skin_browser_source: SkinBrowserSource,
+    pub skin_search_query: String,
+    pub skin_search_active: bool,
 }
 
 // Actions returned by key handlers
@@ -206,6 +212,7 @@ impl App {
             config,
             theme,
             winamp_skin: None, // loaded lazily when Winamp theme is selected
+            skin_layout: None,
             active_source: SourceKind::Local,
             onboarding_step: OnboardingStep::Welcome,
             onboarding_dep_selected: 0,
@@ -221,6 +228,8 @@ impl App {
             skin_downloading_md5: None,
             skin_total_count: 0,
             skin_browser_source: SkinBrowserSource::Local,
+            skin_search_query: String::new(),
+            skin_search_active: false,
         }
     }
 
@@ -512,6 +521,7 @@ impl App {
                         return SettingsAction::ThemeChanged;
                     } else if self.theme.name != "Winamp" {
                         self.winamp_skin = None;
+                        self.skin_layout = None;
                     }
                 }
                 SettingsAction::None
@@ -646,6 +656,36 @@ impl App {
     ) -> SkinBrowserAction {
         use crossterm::event::KeyCode;
 
+        // Search input mode — capture all keys
+        if self.skin_search_active {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.skin_search_active = false;
+                    self.skin_search_query.clear();
+                    SkinBrowserAction::None
+                }
+                KeyCode::Enter => {
+                    let query = self.skin_search_query.trim().to_string();
+                    self.skin_search_active = false;
+                    if !query.is_empty() {
+                        SkinBrowserAction::Search(query)
+                    } else {
+                        SkinBrowserAction::None
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.skin_search_query.pop();
+                    SkinBrowserAction::None
+                }
+                KeyCode::Char(c) => {
+                    self.skin_search_query.push(c);
+                    SkinBrowserAction::None
+                }
+                _ => SkinBrowserAction::None,
+            };
+        }
+
+        // Normal browse mode
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Settings;
@@ -705,9 +745,14 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if self.skin_browser_has_more && !self.skin_browser_loading {
-                    self.skin_browser_offset += self.skin_entries.len().max(20);
+                    self.skin_browser_offset += self.skin_entries.len().max(50);
                     return SkinBrowserAction::RequestFetch;
                 }
+                SkinBrowserAction::None
+            }
+            KeyCode::Char('/') => {
+                self.skin_search_active = true;
+                self.skin_search_query.clear();
                 SkinBrowserAction::None
             }
             _ => SkinBrowserAction::None,
