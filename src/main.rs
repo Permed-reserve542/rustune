@@ -962,7 +962,7 @@ async fn fetch_skin_search_inner(
     limit: usize,
 ) -> anyhow::Result<(Vec<app::SkinEntry>, usize)> {
     let gql = serde_json::json!({
-        "query": "query($q: String!, $first: Int!, $offset: Int!) { searchSkins(first: $first, offset: $offset, query: $q) { md5 filename nsfw averageColor } }",
+        "query": "query($q: String!, $first: Int!, $offset: Int!) { search_skins(first: $first, offset: $offset, query: $q) { md5 filename nsfw average_color } }",
         "variables": { "q": query, "first": limit, "offset": offset }
     });
 
@@ -976,7 +976,7 @@ async fn fetch_skin_search_inner(
 
     let body: serde_json::Value = resp.json().await?;
 
-    let skins_arr = body["data"]["searchSkins"]
+    let skins_arr = body["data"]["search_skins"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -999,7 +999,7 @@ async fn fetch_skin_search_inner(
             let raw_filename = s["filename"].as_str().unwrap_or("").to_string();
             let display_name = raw_filename.trim_end_matches(".wsz").trim_end_matches(".zip").to_string();
             let is_local = local_md5s.iter().any(|l| l == &md5.to_lowercase());
-            let average_color = s["averageColor"].as_str().map(|c| c.to_string());
+            let average_color = s["average_color"].as_str().map(|c| c.to_string());
             app::SkinEntry {
                 md5,
                 filename: raw_filename,
@@ -1022,7 +1022,7 @@ async fn fetch_skin_list_inner(
     limit: usize,
 ) -> anyhow::Result<(Vec<app::SkinEntry>, usize)> {
     let query = serde_json::json!({
-        "query": "query($first: Int!, $offset: Int!) { skins(first: $first, offset: $offset, filter: APPROVED) { nodes { md5 filename nsfw averageColor } count } }",
+        "query": "query($first: Int!, $offset: Int!) { skins(first: $first, offset: $offset, filter: APPROVED) { nodes { md5 filename nsfw average_color } count } }",
         "variables": { "first": limit, "offset": offset }
     });
 
@@ -1063,7 +1063,7 @@ async fn fetch_skin_list_inner(
             let raw_filename = s["filename"].as_str().unwrap_or("").to_string();
             let display_name = raw_filename.trim_end_matches(".wsz").trim_end_matches(".zip").to_string();
             let is_local = local_md5s.iter().any(|l| l == &md5.to_lowercase());
-            let average_color = s["averageColor"].as_str().map(|c| c.to_string());
+            let average_color = s["average_color"].as_str().map(|c| c.to_string());
             app::SkinEntry {
                 md5,
                 filename: raw_filename,
