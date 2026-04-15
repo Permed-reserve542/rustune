@@ -191,6 +191,7 @@ pub struct BmpRect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ZoneKind {
     TitleBar,
+    ClutterBar,
     LedTime,
     Spectrum,
     Marquee,
@@ -201,11 +202,12 @@ pub enum ZoneKind {
     Status,
 }
 
-/// One zone: where to crop from MAIN.BMP, which terminal row it maps to.
+/// One zone: where to crop from MAIN.BMP, which terminal row and column offset.
 #[derive(Debug, Clone, Copy)]
 pub struct SkinZone {
     pub src_rect: BmpRect,
     pub terminal_row: u16,
+    pub col_start: u16,
 }
 
 /// Minimum BMP dimensions required for bitmap mode.
@@ -288,12 +290,12 @@ impl SkinLayout {
         let zone = self.zones.get(&kind);
         match zone {
             Some(z) => {
-                // Each zone occupies one terminal row at the same x/width as main_area
                 let y = main_area.y + z.terminal_row;
+                let x = main_area.x + z.col_start;
                 Rect {
-                    x: main_area.x,
+                    x,
                     y,
-                    width: main_area.width,
+                    width: main_area.width.saturating_sub(z.col_start),
                     height: 1,
                 }
             }
@@ -315,38 +317,52 @@ fn build_zones() -> HashMap<ZoneKind, SkinZone> {
     m.insert(ZoneKind::TitleBar, SkinZone {
         src_rect: BmpRect { x: 0, y: 0, w: 275, h: 20 },
         terminal_row: 0,
+        col_start: 0,
+    });
+    m.insert(ZoneKind::ClutterBar, SkinZone {
+        src_rect: BmpRect { x: 9, y: 6, w: 16, h: 16 },
+        terminal_row: 1,
+        col_start: 0,
     });
     m.insert(ZoneKind::LedTime, SkinZone {
         src_rect: BmpRect { x: 9, y: 26, w: 62, h: 12 },
         terminal_row: 1,
+        col_start: 3,
     });
     m.insert(ZoneKind::Spectrum, SkinZone {
         src_rect: BmpRect { x: 78, y: 22, w: 197, h: 28 },
         terminal_row: 1,
+        col_start: 11,
     });
     m.insert(ZoneKind::Marquee, SkinZone {
         src_rect: BmpRect { x: 9, y: 53, w: 257, h: 12 },
         terminal_row: 2,
+        col_start: 0,
     });
     m.insert(ZoneKind::SeekBar, SkinZone {
         src_rect: BmpRect { x: 16, y: 72, w: 244, h: 6 },
         terminal_row: 3,
+        col_start: 0,
     });
     m.insert(ZoneKind::Transport, SkinZone {
         src_rect: BmpRect { x: 0, y: 57, w: 136, h: 36 },
         terminal_row: 4,
+        col_start: 0,
     });
     m.insert(ZoneKind::Volume, SkinZone {
         src_rect: BmpRect { x: 136, y: 57, w: 68, h: 36 },
         terminal_row: 4,
+        col_start: 20,
     });
     m.insert(ZoneKind::Balance, SkinZone {
         src_rect: BmpRect { x: 204, y: 57, w: 68, h: 36 },
         terminal_row: 4,
+        col_start: 30,
     });
     m.insert(ZoneKind::Status, SkinZone {
         src_rect: BmpRect { x: 0, y: 93, w: 275, h: 23 },
         terminal_row: 5,
+        col_start: 0,
     });
     m
 }
@@ -400,6 +416,12 @@ Initialize in `App::new()` (after `winamp_skin: None,` around line 212):
 
 ```rust
 skin_layout: None,
+```
+
+Also, in `handle_settings_key()` around line 520, where `self.winamp_skin = None;` is set when switching away from Winamp theme, add immediately after it:
+
+```rust
+self.skin_layout = None;
 ```
 
 - [ ] **Step 2: Populate skin_layout when skins are loaded in main.rs**
@@ -457,23 +479,13 @@ git commit -m "feat(app): add skin_layout field, populate on skin load"
 
 This is the largest task. The current `render()` becomes `render_text_mode()`, and a new `render()` dispatches between modes.
 
+> **Steps 1–3 must be done atomically** — do not commit between them, as partial completion would break the Winamp renderer. Do Steps 1, 2, and 3 together, then build and test.
+
 - [ ] **Step 1: Rename current render() to render_text_mode()**
 
 Rename the `pub fn render(frame: &mut Frame, app: &mut App)` function (line 138) to `fn render_text_mode(frame: &mut Frame, app: &mut App)`.
 
-Remove the MAIN.BMP background rendering block at the top (lines 143-147 in the renamed function), since `render_text_mode` should be pure styled text (no bitmap). The current code renders `main_bitmap` as background and then paints text on top — for the text fallback, we don't want that bitmap background.
-
-Replace those lines:
-```rust
-    // If the loaded WSZ contains MAIN.BMP pixels, use it as the actual background UI.
-    if let Some(ref skin) = app.winamp_skin {
-        if let Some(ref bmp) = skin.main_bitmap {
-            skin_bitmap::render_scaled_bitmap(frame, area, bmp);
-        }
-    }
-```
-
-With nothing (just delete them). The `render_text_mode` function's `Block::default().style(Style::default().bg(sc.body_bg))` already provides a solid background.
+Keep the MAIN.BMP background rendering block at the top (lines 143-147 in the renamed function). This is important: skins that have MAIN.BMP but are missing other required BMPs will still get their bitmap background in text fallback mode. This preserves the existing behavior.
 
 - [ ] **Step 2: Add new dispatch render() function**
 
